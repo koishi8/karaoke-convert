@@ -113,7 +113,7 @@ namespace LosslessMedia
             root.Controls.Add(header, 0, 0);
 
             TableLayoutPanel modeRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 0, 0, 8) };
-            string[] titles = { "FLAC  →  WAV", "MKV  →  MP4", "AVI  +  音频  →  MKV" };
+            string[] titles = { "FLAC  →  WAV", "MKV  →  MP4", "MP4  +  音频  →  MKV" };
             string[] subs = { "保留采样率、声道和位深", "优先极速封装，可选兼容转码", "替换原音轨，保留无损音质" };
             for (int i = 0; i < 3; i++)
             {
@@ -249,15 +249,15 @@ namespace LosslessMedia
             for (int i = 0; i < modes.Length; i++) { modes[i].Selected = i == (int)mode; modes[i].Invalidate(); }
             foreach (Control control in inputHost.Controls.Cast<Control>().ToArray()) control.Dispose();
             inputHost.Controls.Clear();
-            compressBox.Visible = addMergeButton.Visible = mode == MediaTaskKind.MergeAviAudio;
+            compressBox.Visible = addMergeButton.Visible = mode == MediaTaskKind.MergeMp4Audio;
             fallbackBox.Visible = mode == MediaTaskKind.MkvToMp4;
-            if (mode == MediaTaskKind.MergeAviAudio)
+            if (mode == MediaTaskKind.MergeMp4Audio)
             {
-                description.Text = "直接复制 AVI 视频，仅使用外部音轨；不裁剪两者时长。输出到 AVI 所在目录。";
+                description.Text = "直接复制 MP4 视频，仅使用外部音轨；不裁剪两者时长。输出到 MP4 所在目录。";
                 TableLayoutPanel pair = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
                 pair.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
                 pair.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-                videoDrop = new DropTile("拖入 AVI 视频", "或点击选择视频", false);
+                videoDrop = new DropTile("拖入 MP4 视频", "或点击选择视频", false);
                 audioDrop = new DropTile("拖入 WAV / FLAC 音频", "原视频中的音轨将被忽略", false);
                 videoDrop.Margin = new Padding(0, 0, 7, 0);
                 audioDrop.Margin = new Padding(7, 0, 0, 0);
@@ -277,7 +277,7 @@ namespace LosslessMedia
                 description.Text = flac ? "FLAC 无损解码为 PCM WAV，保留源位深、采样率和声道。大文件自动使用 RF64。" : "优先复制全部视频和音轨；MP4 不保留 MKV 字幕与附件。可允许不兼容时进行有损转码。";
                 mainDrop = new DropTile(flac ? "将 FLAC 文件拖到这里" : "将 MKV 文件拖到这里", "也可点击选择文件  ·  支持批量导入", true);
                 mainDrop.Dock = DockStyle.Fill;
-                mainDrop.FilesDropped += delegate(string[] files) { AddBatch(files); };
+                mainDrop.FilesDropped += delegate(string[] files) { ImportPaths(files); };
                 mainDrop.Click += delegate { BrowseBatch(); };
                 inputHost.Controls.Add(mainDrop);
             }
@@ -298,8 +298,8 @@ namespace LosslessMedia
         {
             using (OpenFileDialog dialog = new OpenFileDialog())
             {
-                dialog.Title = video ? "选择 AVI 视频" : "选择外部音轨";
-                dialog.Filter = video ? "AVI 视频 (*.avi)|*.avi" : "无损音频 (*.wav;*.flac)|*.wav;*.flac";
+                dialog.Title = video ? "选择 MP4 视频" : "选择外部音轨";
+                dialog.Filter = video ? "MP4 视频 (*.mp4)|*.mp4" : "无损音频 (*.wav;*.flac)|*.wav;*.flac";
                 if (dialog.ShowDialog(this) == DialogResult.OK) SetMergeFiles(dialog.FileNames);
             }
         }
@@ -307,10 +307,10 @@ namespace LosslessMedia
         private void ImportPaths(string[] files)
         {
             if (files == null || files.Length == 0) return;
-            bool containsAvi = files.Any(p => string.Equals(Path.GetExtension(p), ".avi", StringComparison.OrdinalIgnoreCase));
-            if (containsAvi || mode == MediaTaskKind.MergeAviAudio)
+            bool containsMp4 = files.Any(p => string.Equals(Path.GetExtension(p), ".mp4", StringComparison.OrdinalIgnoreCase));
+            if (containsMp4 || mode == MediaTaskKind.MergeMp4Audio)
             {
-                SetMode(MediaTaskKind.MergeAviAudio);
+                SetMode(MediaTaskKind.MergeMp4Audio);
                 SetMergeFiles(files);
             }
             else
@@ -324,7 +324,7 @@ namespace LosslessMedia
 
         private void AddBatch(string[] files)
         {
-            if (mode == MediaTaskKind.MergeAviAudio) { SetMergeFiles(files); return; }
+            if (mode == MediaTaskKind.MergeMp4Audio) { SetMergeFiles(files); return; }
             string expected = mode == MediaTaskKind.FlacToWav ? ".flac" : ".mkv";
             int added = 0;
             int rejected = 0;
@@ -340,16 +340,16 @@ namespace LosslessMedia
 
         private void SetMergeFiles(string[] files)
         {
-            string[] videos = files.Where(p => File.Exists(p) && Path.GetExtension(p).Equals(".avi", StringComparison.OrdinalIgnoreCase)).ToArray();
+            string[] videos = files.Where(p => File.Exists(p) && Path.GetExtension(p).Equals(".mp4", StringComparison.OrdinalIgnoreCase)).ToArray();
             string[] audios = files.Where(p => File.Exists(p) && (Path.GetExtension(p).Equals(".wav", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(p).Equals(".flac", StringComparison.OrdinalIgnoreCase))).ToArray();
             if (videos.Length > 1 || audios.Length > 1)
             {
-                MessageBox.Show(this, "一次请选一个 AVI 和一个外部音频文件，避免配错音轨。可分别添加多组合成任务。", "选择合成文件", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "一次请选一个 MP4 和一个外部音频文件，避免配错音轨。可分别添加多组合成任务。", "选择合成文件", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
             if (videos.Length == 1) videoPath = Path.GetFullPath(videos[0]);
             if (audios.Length == 1) audioPath = Path.GetFullPath(audios[0]);
-            if (videos.Length + audios.Length == 0) overallLabel.Text = "请拖入 AVI 视频或 WAV / FLAC 音频文件。";
+            if (videos.Length + audios.Length == 0) overallLabel.Text = "请拖入 MP4 视频或 WAV / FLAC 音频文件。";
             UpdateMergeTiles();
         }
 
@@ -357,7 +357,7 @@ namespace LosslessMedia
         {
             if (videoDrop != null && !videoDrop.IsDisposed)
             {
-                videoDrop.Title = videoPath == null ? "拖入 AVI 视频" : Path.GetFileName(videoPath);
+                videoDrop.Title = videoPath == null ? "拖入 MP4 视频" : Path.GetFileName(videoPath);
                 videoDrop.Detail = videoPath == null ? "或点击选择视频" : videoPath;
                 tips.SetToolTip(videoDrop, videoPath);
             }
@@ -373,7 +373,7 @@ namespace LosslessMedia
         private void AddMergeJob()
         {
             if (videoPath == null || audioPath == null) return;
-            if (AddJob(new MediaJob { Kind = MediaTaskKind.MergeAviAudio, InputPath = videoPath, AudioPath = audioPath, CompressAudio = compressBox.Checked }))
+            if (AddJob(new MediaJob { Kind = MediaTaskKind.MergeMp4Audio, InputPath = videoPath, AudioPath = audioPath, CompressAudio = compressBox.Checked }))
             {
                 overallLabel.Text = "合成任务已加入队列";
                 videoPath = audioPath = null;
@@ -402,7 +402,7 @@ namespace LosslessMedia
         private string NextOutput(MediaJob job)
         {
             string extension = job.Kind == MediaTaskKind.FlacToWav ? ".wav" : job.Kind == MediaTaskKind.MkvToMp4 ? ".mp4" : ".mkv";
-            string stem = Path.GetFileNameWithoutExtension(job.InputPath) + (job.Kind == MediaTaskKind.MergeAviAudio ? "_无损" : "");
+            string stem = Path.GetFileNameWithoutExtension(job.InputPath) + (job.Kind == MediaTaskKind.MergeMp4Audio ? "_无损" : "");
             string directory = Path.GetDirectoryName(job.InputPath);
             string candidate = Path.Combine(directory, stem + extension);
             int suffix = 2;
@@ -642,7 +642,7 @@ namespace LosslessMedia
 
         private static string KindName(MediaTaskKind kind)
         {
-            return kind == MediaTaskKind.FlacToWav ? "FLAC → WAV" : kind == MediaTaskKind.MkvToMp4 ? "MKV → MP4" : "AVI + 音频 → MKV";
+            return kind == MediaTaskKind.FlacToWav ? "FLAC → WAV" : kind == MediaTaskKind.MkvToMp4 ? "MKV → MP4" : "MP4 + 音频 → MKV";
         }
 
         private static Button MakeButton(string text, bool primary)

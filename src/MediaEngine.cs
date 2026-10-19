@@ -11,7 +11,7 @@ using System.Web.Script.Serialization;
 
 namespace LosslessMedia
 {
-    public enum MediaTaskKind { FlacToWav, MkvToMp4, MergeAviAudio }
+    public enum MediaTaskKind { FlacToWav, MkvToMp4, MergeMp4Audio }
 
     public sealed class MediaJob
     {
@@ -116,7 +116,7 @@ namespace LosslessMedia
             string full = Path.GetFullPath(inputPath);
             string extension = ExtensionFor(kind);
             string stem = Path.GetFileNameWithoutExtension(full);
-            if (kind == MediaTaskKind.MergeAviAudio) stem += "_无损合成";
+            if (kind == MediaTaskKind.MergeMp4Audio) stem += "_无损合成";
             string directory = Path.GetDirectoryName(full);
             string proposed = Path.Combine(directory, stem + extension);
             int number = 1;
@@ -138,7 +138,7 @@ namespace LosslessMedia
             Report(progress, null, "正在读取媒体信息…", null);
             MediaInfo source = Probe(job.InputPath, tools, token);
             MediaInfo audio = null;
-            if (job.Kind == MediaTaskKind.MergeAviAudio) audio = Probe(job.AudioPath, tools, token);
+            if (job.Kind == MediaTaskKind.MergeMp4Audio) audio = Probe(job.AudioPath, tools, token);
             ValidateStreams(job, source, audio);
 
             List<string> notes = new List<string>();
@@ -197,11 +197,11 @@ namespace LosslessMedia
         {
             if (String.IsNullOrWhiteSpace(job.InputPath) || !File.Exists(job.InputPath))
                 throw new FileNotFoundException("找不到输入文件，请重新添加文件。", job.InputPath);
-            string required = job.Kind == MediaTaskKind.FlacToWav ? ".flac" : job.Kind == MediaTaskKind.MkvToMp4 ? ".mkv" : job.Kind == MediaTaskKind.MergeAviAudio ? ".avi" : null;
+            string required = job.Kind == MediaTaskKind.FlacToWav ? ".flac" : job.Kind == MediaTaskKind.MkvToMp4 ? ".mkv" : job.Kind == MediaTaskKind.MergeMp4Audio ? ".mp4" : null;
             if (required == null) throw new ArgumentException("未知的转换类型。");
             if (!String.Equals(Path.GetExtension(job.InputPath), required, StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("此任务需要 " + required.ToUpperInvariant() + " 输入文件。");
-            if (job.Kind == MediaTaskKind.MergeAviAudio)
+            if (job.Kind == MediaTaskKind.MergeMp4Audio)
             {
                 if (String.IsNullOrWhiteSpace(job.AudioPath) || !File.Exists(job.AudioPath))
                     throw new FileNotFoundException("请选择用于替换原音轨的 WAV 或 FLAC 文件。", job.AudioPath);
@@ -247,9 +247,8 @@ namespace LosslessMedia
         private static List<string> BuildArguments(MediaJob job, MediaInfo source, MediaInfo audio, string target, bool lossy, List<string> notes, IProgress<MediaProgress> progress)
         {
             List<string> args = new List<string>(new string[] { "-hide_banner", "-nostdin", "-n", "-loglevel", "warning", "-progress", "pipe:1", "-nostats" });
-            if (job.Kind == MediaTaskKind.MergeAviAudio) args.AddRange(new string[] { "-fflags", "+genpts" });
             args.AddRange(new string[] { "-i", job.InputPath });
-            if (job.Kind == MediaTaskKind.MergeAviAudio) args.AddRange(new string[] { "-i", job.AudioPath });
+            if (job.Kind == MediaTaskKind.MergeMp4Audio) args.AddRange(new string[] { "-i", job.AudioPath });
             if (job.Kind == MediaTaskKind.FlacToWav)
             {
                 int bits = source.Audio[0].Bits;
@@ -457,7 +456,7 @@ namespace LosslessMedia
             }
             if (job.Kind == MediaTaskKind.MkvToMp4)
                 return lossy ? "MKV → MP4 完成：已使用 H.264（CRF 18）和 AAC（256 kbps）进行有损兼容转换。" : "MKV → MP4 完成：所有视频、音频轨道直接复制，无重新编码；字幕和附件未写入 MP4。";
-            return "AVI + 外部音频 → MKV 完成：视频直接复制，外部音频无损保留，AVI 原音轨已排除。";
+            return "MP4 + 外部音频 → MKV 完成：视频直接复制，外部音频无损保留，MP4 原音轨已排除。";
         }
 
         private static string InitialMessage(MediaTaskKind kind)
@@ -471,7 +470,7 @@ namespace LosslessMedia
             {
                 case MediaTaskKind.FlacToWav: return ".wav";
                 case MediaTaskKind.MkvToMp4: return ".mp4";
-                case MediaTaskKind.MergeAviAudio: return ".mkv";
+                case MediaTaskKind.MergeMp4Audio: return ".mkv";
                 default: throw new ArgumentException("未知的转换类型。");
             }
         }

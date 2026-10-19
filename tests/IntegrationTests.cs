@@ -52,10 +52,11 @@ internal static class IntegrationTests
         await Case("FLAC 24-bit stereo to WAV preserves all PCM samples", delegate { return FlacToWav(24, 2, 48000); });
         await Case("FLAC 32-bit stereo to WAV preserves all PCM samples", delegate { return FlacToWav(32, 2, 96000); });
         await Case("MKV to MP4 copies H.264 and AAC packet payloads", RemuxMkv);
-        await Case("AVI plus WAV copies video and replaces original audio without truncation", MergeWav);
-        await Case("AVI plus FLAC copies external compressed packet payloads", MergeFlac);
+        await Case("MP4 plus WAV preserves decoded video and replaces AAC audio without truncation", MergeWav);
+        await Case("MP4 plus FLAC preserves video and external compressed packet payloads", MergeFlac);
         await Case("Optional FLAC compression preserves 24-bit PCM samples", MergeCompressedWav);
         await Case("32-bit PCM remains exact with optional compression enabled", Merge32BitWav);
+        await Case("MP4 merge rejects actual AVI input without creating output", RejectAviMergeInput);
         await Case("Incompatible MKV reports failure when fallback is disabled", NoLossyFallback);
         await Case("Incompatible MKV uses explicitly allowed H.264 fallback", LossyFallback);
         await Case("Existing output is preserved byte for byte", CollisionSafety);
@@ -99,23 +100,23 @@ internal static class IntegrationTests
         True(!result.UsedLossyEncoding, "Supported remux must not transcode");
     }
 
-    private static string EnsureAvi()
+    private static string EnsureMp4()
     {
-        string path = P("原始 歌曲.avi");
-        if (!File.Exists(path)) Media(path, "testsrc2=size=160x90:rate=25:duration=1.0", "sine=frequency=211:sample_rate=48000:duration=1.0", "mpeg4", "pcm_s16le");
+        string path = P("原始 歌曲 H264 AAC.mp4");
+        if (!File.Exists(path)) Media(path, "testsrc2=size=160x90:rate=25:duration=1.0", "sine=frequency=211:sample_rate=48000:duration=1.0", "libx264", "aac");
         return path;
     }
 
     private static async Task MergeWav()
     {
-        string video = EnsureAvi();
+        string video = EnsureMp4();
         string audio = P("替换 长音轨 24 位.wav");
         AudioFixture(audio, 24, 2, 48000, 2.73, false);
-        ConversionResult result = await Convert(MediaTaskKind.MergeAviAudio, video, audio, P("合成 PCM.mkv"), false, false);
-        Equal(PacketHashes(video, "v:0"), PacketHashes(result.OutputPath, "v:0"), "AVI compressed video packet sequence");
+        ConversionResult result = await Convert(MediaTaskKind.MergeMp4Audio, video, audio, P("合成 PCM.mkv"), false, false);
+        AssertMergedVideoPreserved(video, result);
         Equal(AudioHash(audio), AudioHash(result.OutputPath), "External audio PCM SHA-256 including full tail");
         Equal(1, Streams(result.OutputPath).Count(s => Str(s, "codec_type") == "audio"), "Output audio stream count");
-        True(AudioHash(video) != AudioHash(result.OutputPath), "Original AVI audio must be excluded");
+        True(AudioHash(video) != AudioHash(result.OutputPath), "Original MP4 AAC audio must be excluded");
         True(Duration(result.OutputPath) >= 2.7, "Output must retain long external audio");
         Equal("pcm_s24le", Str(AudioStream(result.OutputPath), "codec_name"), "WAV codec copied");
     }
@@ -124,7 +125,8 @@ internal static class IntegrationTests
     {
         string audio = P("替换 无损.flac");
         AudioFixture(audio, 24, 2, 48000, 1.79, true);
-        ConversionResult result = await Convert(MediaTaskKind.MergeAviAudio, EnsureAvi(), audio, P("合成 FLAC.mkv"), false, false);
+        ConversionResult result = await Convert(MediaTaskKind.MergeMp4Audio, EnsureMp4(), audio, P("合成 FLAC.mkv"), false, false);
+        AssertMergedVideoPreserved(EnsureMp4(), result);
         Equal(PacketHashes(audio, "a:0"), PacketHashes(result.OutputPath, "a:0"), "External FLAC compressed packet sequence");
         Equal(AudioHash(audio), AudioHash(result.OutputPath), "External FLAC PCM SHA-256");
         Equal("flac", Str(AudioStream(result.OutputPath), "codec_name"), "FLAC codec copied");
@@ -134,7 +136,8 @@ internal static class IntegrationTests
     {
         string audio = P("替换 长音轨 24 位.wav");
         if (!File.Exists(audio)) AudioFixture(audio, 24, 2, 48000, 2.73, false);
-        ConversionResult result = await Convert(MediaTaskKind.MergeAviAudio, EnsureAvi(), audio, P("合成 压缩.mkv"), true, false);
+        ConversionResult result = await Convert(MediaTaskKind.MergeMp4Audio, EnsureMp4(), audio, P("合成 压缩.mkv"), true, false);
+        AssertMergedVideoPreserved(EnsureMp4(), result);
         Equal("flac", Str(AudioStream(result.OutputPath), "codec_name"), "Optional compression uses FLAC");
         Equal(AudioHash(audio), AudioHash(result.OutputPath), "Compressed 24-bit PCM SHA-256");
     }
@@ -143,9 +146,47 @@ internal static class IntegrationTests
     {
         string audio = P("替换 32 位.wav");
         AudioFixture(audio, 32, 2, 96000, 1.31, false);
-        ConversionResult result = await Convert(MediaTaskKind.MergeAviAudio, EnsureAvi(), audio, P("合成 32 位.mkv"), true, false);
+        ConversionResult result = await Convert(MediaTaskKind.MergeMp4Audio, EnsureMp4(), audio, P("合成 32 位.mkv"), true, false);
+        AssertMergedVideoPreserved(EnsureMp4(), result);
         Equal("pcm_s32le", Str(AudioStream(result.OutputPath), "codec_name"), "32-bit PCM must remain lossless");
         Equal(AudioHash(audio), AudioHash(result.OutputPath), "32-bit PCM SHA-256");
+    }
+
+    private static void AssertMergedVideoPreserved(string input, ConversionResult result)
+    {
+        Dictionary<string, object> original = VideoStream(input);
+        Dictionary<string, object> merged = VideoStream(result.OutputPath);
+        Equal("h264", Str(original, "codec_name"), "MP4 fixture uses H.264");
+        Equal("aac", Str(AudioStream(input), "codec_name"), "MP4 fixture has original AAC audio");
+        Equal(Str(original, "codec_name"), Str(merged, "codec_name"), "Merged video codec");
+        Equal(Int(original, "width"), Int(merged, "width"), "Merged video width");
+        Equal(Int(original, "height"), Int(merged, "height"), "Merged video height");
+        if (PacketHashes(input, "v:0") != PacketHashes(result.OutputPath, "v:0"))
+            Console.WriteLine("NOTE Container packet framing differs; checking every decoded video frame.");
+        Equal(VideoHash(input), VideoHash(result.OutputPath), "All decoded video frame bytes SHA-256");
+        Equal(1, Streams(result.OutputPath).Count(s => Str(s, "codec_type") == "audio"), "Only external audio remains");
+        Equal(0, Streams(result.OutputPath).Count(s => Str(s, "codec_type") == "audio" && Str(s, "codec_name") == "aac"), "Original AAC track is excluded");
+        True(!result.UsedLossyEncoding, "External audio merge must not use lossy encoding");
+    }
+
+    private static async Task RejectAviMergeInput()
+    {
+        string input = P("不再支持的 AVI 输入.avi");
+        Media(input, "testsrc2=size=160x90:rate=25:duration=0.6", "sine=frequency=211:sample_rate=48000:duration=0.6", "mpeg4", "pcm_s16le");
+        string audio = P("替换 无损.flac");
+        if (!File.Exists(audio)) AudioFixture(audio, 24, 2, 48000, 1.79, true);
+        string output = P("拒绝 AVI.mkv");
+        string before = FileHash(input);
+        bool rejected = false;
+        try { await Convert(MediaTaskKind.MergeMp4Audio, input, audio, output, false, false); }
+        catch (ArgumentException ex)
+        {
+            True(ex.Message.IndexOf(".mp4", StringComparison.OrdinalIgnoreCase) >= 0, "Rejection explains MP4 input requirement");
+            rejected = true;
+        }
+        True(rejected, "An actual AVI file must be rejected by MP4 merge validation");
+        True(!File.Exists(output), "Rejected AVI input creates no output");
+        Equal(before, FileHash(input), "Rejected source remains unchanged");
     }
 
     private static string EnsureIncompatibleMkv()
@@ -292,6 +333,13 @@ internal static class IntegrationTests
     }
 
     private static string AudioHash(string path) { return Run(ffmpeg, "-hide_banner", "-v", "error", "-i", path, "-map", "0:a:0", "-c:a", "pcm_s32le", "-f", "hash", "-hash", "sha256", "-").Trim(); }
+    private static string VideoHash(string path) { return Run(ffmpeg, "-hide_banner", "-v", "error", "-i", path, "-map", "0:v:0", "-an", "-vsync", "0", "-c:v", "rawvideo", "-f", "hash", "-hash", "sha256", "-").Trim(); }
+    private static string FileHash(string path)
+    {
+        using (SHA256 hash = SHA256.Create())
+        using (FileStream stream = File.OpenRead(path))
+            return BitConverter.ToString(hash.ComputeHash(stream));
+    }
     private static string PacketHashes(string path, string selector) { return Run(ffprobe, "-v", "error", "-select_streams", selector, "-show_packets", "-show_data_hash", "sha256", "-show_entries", "packet=data_hash", "-of", "csv=p=0", path).Trim(); }
     private static List<Dictionary<string, object>> Streams(string path)
     {
