@@ -1,0 +1,24 @@
+# Build outputs
+/dist/
+/build/
+/bin/
+/obj/
+
+# Local verification media and temporary outputs
+/test-media/
+/test-output/
+/test-artifacts/
+/verification-output/
+/artifacts/
+/tests/artifacts/
+*.partial
+*.tmp
+
+# Editor and machine-local settings
+.vs/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini
+ffmpeg-location.txt
